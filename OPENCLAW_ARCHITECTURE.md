@@ -55,20 +55,30 @@ The system is decomposed into four major subsystems:
     *   `PluginRegistry`: Loads and registers plugins (skills, hooks, channels).
 *   **Data Flow**: Receives raw events from channels -> Normalizes them -> Routes to the appropriate Agent Session.
 
+#### Gateway Internal State
+The `GatewayRuntimeState` is the in-memory brain. It holds:
+
 ```mermaid
-graph TD
-    subgraph "Gateway Layer"
-        GS[GatewayServer] --> CM[ChannelManager]
-        GS --> PR[PluginRegistry]
-        GS --> State[Runtime State]
-    end
+classDiagram
+    class GatewayRuntimeState {
+        +WebSocketServer wss
+        +Set~Client~ clients
+        +AgentRunSequence agentRunSeq
+        +ChatRunState chatRunState
+        +HttpServer httpServer
+    }
+    class Client {
+        +id
+        +connection
+        +subscriptions
+    }
+    class AgentRunSequence {
+        +enqueue(job)
+        +activeRuns
+    }
 
-    subgraph "Agent Layer"
-        PR -->|Registers| Skill[Skills]
-        State -->|Manages| Session[Session]
-    end
-
-    CM -->|Loads| Channel[Channel Plugins]
+    GatewayRuntimeState *-- Client : manages
+    GatewayRuntimeState *-- AgentRunSequence : schedules
 ```
 
 ### 2.2. Agents (The Brain)
@@ -93,6 +103,23 @@ graph TD
     *   **Hooks**: Intercepting lifecycle events (e.g., `before_prompt_build`).
     *   **Channels**: Adding support for new messaging platforms.
 
+#### Hook Lifecycle
+
+```mermaid
+sequenceDiagram
+    participant G as Gateway
+    participant A as Agent
+    participant H as Hooks (Plugins)
+
+    G->>H: gateway_start
+    G->>A: Start Agent
+    A->>H: before_model_resolve (Override Model?)
+    A->>H: before_prompt_build (Inject Context)
+    A->>H: llm_input (Log Request)
+    A->>H: llm_output (Log Response)
+    A->>H: agent_end (Cleanup)
+```
+
 ## 3. Lifecycle-Driven Walkthrough (End-to-End Flow)
 
 Let's follow a single message from a user on Telegram to the assistant and back.
@@ -103,7 +130,9 @@ Let's follow a single message from a user on Telegram to the assistant and back.
 3.  **Processing**: `processInboundMessage` is called. It performs authorization checks (allowlists).
 4.  **Debounce**: Messages are debounced (grouped) to handle rapid-fire inputs.
 5.  **Normalization**: The Telegram message is converted into an internal OpenClaw message format.
-6.  **Routing**: The Gateway determines which Agent Session this message belongs to (based on Chat ID and Topic).
+6.  **Routing**: The Gateway determines which Agent Session this message belongs to.
+    *   **Logic**: `PeerID` (e.g., `telegram:12345`) -> `SessionKey` (e.g., `agent:default:telegram:12345`).
+    *   **Threads**: If it's a topic/thread, the key includes the topic ID.
 
 ### Step 2: Agent Execution (Gateway -> Agent)
 1.  **Session Loading**: The `Gateway` invokes the `PiEmbeddedRunner` for the target session.
@@ -170,16 +199,43 @@ This is the application root.
 *   **State Management**: It holds the `GatewayRuntimeState`, which includes active connections, running agents (`agentRunSeq`), and shared resources.
 
 ### 4.2. PiEmbeddedRunner (`src/agents/pi-embedded-runner/run/attempt.ts`)
-This is the heart of the AI processing.
-*   **`runEmbeddedAttempt`**: The main function.
-    *   **Workspace**: Resolves the working directory for the session.
-    *   **Sandbox**: Initializes the sandbox environment if configured.
-    *   **Tools**: Dynamically creates tool definitions based on enabled skills and permissions.
-    *   **Session**: Opens the `SessionManager` (locking the session file).
-    *   **Loop**:
-        *   `activeSession.prompt()`: Sends the request to the LLM.
-        *   `subscribeEmbeddedPiSession`: Subscribes to the stream of events (tokens, tool calls).
-        *   **Context Management**: Handles context window overflows by compacting history or truncating tool results.
+This is the heart of the AI processing. It manages the delicate dance between the LLM, tools, and session history.
+
+#### The Agent Loop (Visualized)
+
+```mermaid
+flowchart TD
+    Start([Start Attempt]) --> Workspace[Resolve Workspace & Sandbox]
+    Workspace --> Session[Open & Lock Session]
+    Session --> Tools[Load Skills & Tools]
+    Tools --> Hooks[Run Hooks: before_prompt_build]
+    Hooks --> Prompt[Build System Prompt]
+
+    Prompt --> ContextGuard{Context Overflow?}
+    ContextGuard -- Yes --> Compact[Compact History / Truncate]
+    Compact --> ContextGuard
+    ContextGuard -- No --> LLM[Call LLM Provider]
+
+    LLM --> Stream{Stream Response}
+    Stream -- Error --> ErrorHandler{Retryable?}
+    ErrorHandler -- Yes --> Backoff[Backoff & Retry] --> LLM
+    ErrorHandler -- No --> Fail([Fail Run])
+
+    Stream -- Tool Call --> ToolExec[Execute Tool]
+    ToolExec --> ToolResult[Capture Result]
+    ToolResult --> Append[Append to History]
+    Append --> LLM
+
+    Stream -- Final Text --> Output[Send to Gateway]
+    Output --> Finish([End Run])
+```
+
+#### Key Mechanisms
+*   **Context Window Guard**: Before every prompt, the runner checks if the estimated token count exceeds the model's limit. If so, it triggers **Compaction** (summarizing old turns) or **Truncation** (dropping large tool outputs).
+*   **Sandboxing**: Tools run in a Docker container if `sandbox: "non-main"` is set, isolating potentially dangerous commands.
+*   **Hooks**: Plugins can intercept execution.
+    *   `before_prompt_build`: Inject context into the prompt.
+    *   `llm_input` / `llm_output`: Log or modify traffic.
 
 ### 4.3. SessionManager (`@mariozechner/pi-coding-agent`)
 *   **Responsibility**: Persisting the conversation.
