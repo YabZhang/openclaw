@@ -23,11 +23,11 @@ OpenClaw is a **distributed system** (Gateway + Agents) that acts as a **persona
 
 ```mermaid
 graph TD
-    User((User)) -->|Telegram/WhatsApp/etc.| Channel[Channel Adapter]
-    Channel -->|Normalized Message| Gateway[Gateway (Control Plane)]
+    User(("User")) -->|Telegram/WhatsApp/etc.| Channel["Channel Adapter"]
+    Channel -->|Normalized Message| Gateway["Gateway (Control Plane)"]
 
     subgraph "Local Device / Server"
-        Gateway -->|Route| Session[Session Manager]
+        Gateway -->|Route| Session["Session Manager"]
         Session -->|Context| Agent["Pi Agent (Execution)"]
 
         Agent -->|Prompt| LLM["LLM Provider (OpenAI/Anthropic/Local)"]
