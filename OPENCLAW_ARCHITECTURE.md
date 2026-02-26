@@ -28,12 +28,12 @@ graph TD
 
     subgraph "Local Device / Server"
         Gateway -->|Route| Session[Session Manager]
-        Session -->|Context| Agent[Pi Agent (Execution)]
+        Session -->|Context| Agent["Pi Agent (Execution)"]
 
-        Agent -->|Prompt| LLM[LLM Provider (OpenAI/Anthropic/Local)]
+        Agent -->|Prompt| LLM["LLM Provider (OpenAI/Anthropic/Local)"]
         LLM -->|Response/Tool Call| Agent
 
-        Agent -->|Execute| Tool[Local Tools (Bash, Browser, etc.)]
+        Agent -->|Execute| Tool["Local Tools (Bash, Browser, etc.)"]
         Tool -->|Result| Agent
 
         Agent -->|Reply| Gateway
@@ -205,28 +205,28 @@ This is the heart of the AI processing. It manages the delicate dance between th
 
 ```mermaid
 flowchart TD
-    Start([Start Attempt]) --> Workspace[Resolve Workspace & Sandbox]
-    Workspace --> Session[Open & Lock Session]
-    Session --> Tools[Load Skills & Tools]
-    Tools --> Hooks[Run Hooks: before_prompt_build]
-    Hooks --> Prompt[Build System Prompt]
+    Start([Start Attempt]) --> Workspace["Resolve Workspace & Sandbox"]
+    Workspace --> Session["Open & Lock Session"]
+    Session --> Tools["Load Skills & Tools"]
+    Tools --> Hooks["Run Hooks: before_prompt_build"]
+    Hooks --> Prompt["Build System Prompt"]
 
-    Prompt --> ContextGuard{Context Overflow?}
-    ContextGuard -- Yes --> Compact[Compact History / Truncate]
+    Prompt --> ContextGuard{"Context Overflow?"}
+    ContextGuard -- Yes --> Compact["Compact History / Truncate"]
     Compact --> ContextGuard
-    ContextGuard -- No --> LLM[Call LLM Provider]
+    ContextGuard -- No --> LLM["Call LLM Provider"]
 
-    LLM --> Stream{Stream Response}
-    Stream -- Error --> ErrorHandler{Retryable?}
-    ErrorHandler -- Yes --> Backoff[Backoff & Retry] --> LLM
+    LLM --> Stream{"Stream Response"}
+    Stream -- Error --> ErrorHandler{"Retryable?"}
+    ErrorHandler -- Yes --> Backoff["Backoff & Retry"] --> LLM
     ErrorHandler -- No --> Fail([Fail Run])
 
-    Stream -- Tool Call --> ToolExec[Execute Tool]
-    ToolExec --> ToolResult[Capture Result]
-    ToolResult --> Append[Append to History]
+    Stream -- Tool Call --> ToolExec["Execute Tool"]
+    ToolExec --> ToolResult["Capture Result"]
+    ToolResult --> Append["Append to History"]
     Append --> LLM
 
-    Stream -- Final Text --> Output[Send to Gateway]
+    Stream -- Final Text --> Output["Send to Gateway"]
     Output --> Finish([End Run])
 ```
 
